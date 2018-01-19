@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+import os
+
 try:
     from setuptools import setup, find_packages
     packages = find_packages(exclude=['tests'])
@@ -6,12 +8,15 @@ except ImportError:
     from distutils.core import setup
     packages = ["pyLinguist"]
 
+
 setup(
     name="pyLinguist",
     packages=packages,
     version="0.1.3",
     description="Yandex Linguistics APIs for Python 3.3+",
-    long_description="Yandex Linguistics APIs for Python 3.3+",
+    long_description=open(
+        os.path.join(os.path.dirname(__file__), "README.md"), 'r'
+    ).read(),
     author="hell03end",
     author_email="hell03end@outlook.com",
     url="https://github.com/hell03end/pyYandexLinguistics",

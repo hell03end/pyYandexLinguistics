@@ -1,4 +1,9 @@
-from . import YaTranslateException, YaBaseAPIHandler
+from collections import Generator
+from functools import lru_cache
+
+from pyLinguist.utils.base import YaBaseAPIHandler
+from pyLinguist.utils.exc import YaTranslateException
+from pyLinguist.utils.log import log
 
 
 class Dictionary(YaBaseAPIHandler):
@@ -7,8 +12,7 @@ class Dictionary(YaBaseAPIHandler):
 
         for more info look on https://tech.yandex.com/dictionary/
     """
-    _base_url = r"https://dictionary.yandex.net/api/v{version}/" \
-                r"dicservice{json}/"
+    _base_url = r"https://dictionary.yandex.net/api/v{}/dicservice.json/"
     _endpoints = YaBaseAPIHandler._endpoints.copy()
     _endpoints.update({
         'lookup': "lookup"
@@ -22,29 +26,35 @@ class Dictionary(YaBaseAPIHandler):
     # word and translation:
     POS_FILTER = 8
 
-    def __init__(self, api_key: str, xml: bool=False, version: str='1'):
-        super(Dictionary, self).__init__(api_key, xml, version)
-        self._url = self._base_url.format(version=self._v, json=self._json)
+    def __init__(self, api_key: str, version: str='1', **kwargs):
+        super(Dictionary, self).__init__(key=api_key, v=version, **kwargs)
+        self._url = self._base_url.format(self._v)
 
-    def get_langs(self, **params) -> ...:
+    def get_langs(self) -> list:
         """
             Wrapper for 'getLangs' API method.
 
             Use caching to store received info.
             https://tech.yandex.com/dictionary/doc/dg/reference/getLangs-docpage
         """
-        return super(Dictionary, self)._get_langs(self._url, **params)
+        return super(Dictionary, self)._get_langs(self._url)
 
-    def getLangs(self, **params) -> ...:
-        return self.get_langs(**params)
+    def getLangs(self) -> list:
+        return self.get_langs()
 
     @property
     def ok(self) -> bool:
-        """API key is correct"""
         return super(Dictionary, self)._ok(self._url)
 
-    def lookup(self, text: str, lang: str, ui: str='en', flags: int=0,
-               post: bool=False, **parameters) -> ...:
+    @log()
+    @lru_cache(maxsize=32)
+    def lookup(self,
+               text: str,
+               lang: str,
+               ui: str='en',
+               flags: int=0,
+               post: bool=False,
+               encoding: str="utf-8") -> dict:
         """
             Wrapper for 'lookup' API method
 
@@ -64,32 +74,30 @@ class Dictionary(YaBaseAPIHandler):
         """
         if lang not in self.get_langs():
             raise YaTranslateException(501)
-        params = super(Dictionary, self)._form_params(
-            text=text,
-            lang=lang,
-            ui=ui,
-            flags=flags,
-            **parameters
+
+        response = super(Dictionary, self).make_request(
+            Dictionary._make_url(self._url, "lookup"),
+            post=post,
+            encoding=encoding,
+            **super(Dictionary, self)._form_params(
+                text=text,
+                lang=lang,
+                ui=ui,
+                flags=flags
+            )
         )
-        response = super(Dictionary, self).make_combined_request(
-            "lookup", post, **params
-        )
-        if self._json:
-            del response['head']  # depreciated attribute
+        del response['head']  # depreciated attribute
         return response
 
-    def definitions(self, text: str, lang: str, **params) -> ...:
+    def definitions(self, text: str, lang: str, **params) -> list:
         """
             Shortcut for lookup(...)['def']
 
             Return array of dictionary entries.
-            A transcription of the search word may be provided in the 'ts' attribute.
+            A transcription of the search word may be provided
+                in the 'ts' attribute.
         """
-        if "callback" in params:
-            raise ValueError("Wrong usage of callback")
-        elif not self._json:
-            return NotImplemented
-        return self.lookup(text, lang, **params).get("def", None)
+        return self.lookup(text, lang, **params).get("def", [])
 
 
 class Speller(YaBaseAPIHandler):
@@ -99,7 +107,7 @@ class Speller(YaBaseAPIHandler):
         for more info look on https://tech.yandex.ru/speller/
         no SOAP interface available
     """
-    _base_url = r"http://speller.yandex.net/services/spellservice{json}/"
+    _base_url = r"http://speller.yandex.net/services/spellservice.json/"
     _endpoints = {
         'text': "checkText",
         'texts': "checkTexts"
@@ -123,15 +131,17 @@ class Speller(YaBaseAPIHandler):
     ERROR_CAPITALIZATION = 3
     ERROR_TOO_MANY_ERRORS = 4
 
-    def __init__(self, xml: bool=False, encoding: str='utf-8', **kwargs):
-        super(Speller, self).__init__(kwargs.get('api_key', '_'), xml)
+    def __init__(self, encoding: str='utf-8', **kwargs):
+        super(Speller, self).__init__(key=kwargs.get('api_key', '_'), **kwargs)
+
         if encoding.lower() not in self.encodings:
             raise ValueError("Wrong encoding: {}".format(encoding.lower()))
+
         self._ie = encoding.lower()
-        self._url = self._base_url.format(json=self._json)
+        self._url = self._base_url
 
     def get_langs(self) -> set:
-        """List of supported languages"""
+        """ List of supported languages """
         return {'ru', 'en', 'ua'}
 
     def getLangs(self) -> set:
@@ -139,17 +149,21 @@ class Speller(YaBaseAPIHandler):
 
     @property
     def encodings(self) -> set:
-        """Collection of supported encodings"""
+        """ Supported encodings """
         return {"utf-8", "1251"}
 
     @property
     def ok(self) -> bool:
-        """Successfully connect"""
         return super(Speller, self)._ok(None, self.check_text, "hello")
 
-    def _check(self, endpoint: str, text: str or list, lang: list=["ru", "en"],
-               options: int=0, fmt: str="plain", post: bool=False,
-               **parameters) -> ...:
+    @log()
+    def _check(self,
+               endpoint: str,
+               text: str or list,
+               lang: list=["ru", "en"],
+               options: int=0,
+               fmt: str="plain",
+               encoding: str="utf-8") -> list:
         """
             Wrapper for 'getText' and 'getTexts' API methods.
 
@@ -168,43 +182,51 @@ class Speller(YaBaseAPIHandler):
         """
         if endpoint not in self._endpoints:
             raise ValueError("wrong endpoint {}".format(endpoint))
-        if post:
-            return NotImplemented
-        if list(filter((lambda l: l not in self.get_langs()), lang)):
+
+        if list(filter(lambda l: l not in self.get_langs(), lang)):
             raise YaTranslateException(501)
-        params = super(Speller, self)._form_params(
-            text=text,
-            lang=",".join(lang),
-            options=options,
-            format=fmt,
-            ie=self._ie,
-            **parameters
-        )
-        return super(Speller, self).make_combined_request(
-            endpoint, post=False, **params
+
+        return super(Speller, self).make_request(
+            Speller._make_url(self._url, endpoint),
+            post=False,
+            encoding=encoding,
+            **super(Speller, self)._form_params(
+                text=text,
+                lang=",".join(lang),
+                options=options,
+                format=fmt,
+                ie=self._ie
+            )
         )
 
-    def check_text(self, text: str, lang: list=["ru", "en"], options: int=0,
-                   fmt: str="plain", post: bool=False, **parameters) -> ...:
+    def check_text(self,
+                   text: str,
+                   lang: list=["ru", "en"],
+                   options: int=0,
+                   fmt: str="plain",
+                   **params) -> list:
         """
             Wrapper for getText API method.
             https://tech.yandex.ru/speller/doc/dg/reference/checkText-docpage/
         """
         return self._check(
-            endpoint="text",
+            "text",
             text=text,
             lang=lang,
             options=options,
             fmt=fmt,
-            post=post,
-            **parameters
+            **params
         )
 
-    def checkText(self, text: str, **params) -> ...:
+    def checkText(self, text: str, **params) -> list:
         return self.check_text(text, **params)
 
-    def check_texts(self, text: list, lang: list=["ru", "en"], options: int=0,
-                    fmt: str="plain", post: bool=False, **parameters) -> ...:
+    def check_texts(self,
+                    text: list,
+                    lang: list=["ru", "en"],
+                    options: int=0,
+                    fmt: str="plain",
+                    **params) -> list:
         """
             Wrapper for getTexts API method.
             https://tech.yandex.ru/speller/doc/dg/reference/checkTexts-docpage/
@@ -215,9 +237,17 @@ class Speller(YaBaseAPIHandler):
             lang=lang,
             options=options,
             fmt=fmt,
-            post=post,
-            **parameters
+            **params
         )
 
-    def checkTexts(self, text: list, **params) -> ...:
+    def checkTexts(self, text: list, **params) -> list:
         return self.check_texts(text, **params)
+
+    def checking_texts(self, texts: list, **params) -> Generator:
+        """ Yields checked texts """
+        for text in texts:
+            yield self.check_texts(text, **params)
+
+    def checkingTexts(self, texts: list, **params) -> Generator:
+        for text in texts:
+            yield self.check_texts(text, **params)

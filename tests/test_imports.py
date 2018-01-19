@@ -1,5 +1,5 @@
 from pyLinguist import *  # to test absolute import
-from .commons import assert_correct_import
+from tests.commons import assert_correct_import
 
 
 class TestImports:
@@ -8,7 +8,7 @@ class TestImports:
         assert "Dictionary" in globals()
         assert "Predictor" in globals()
         assert "Speller" in globals()
-        assert "YaTranslateException" in globals()
+        assert "YaTranslateException" not in globals()
         assert "_YaAPIHandler" not in globals()
 
     @assert_correct_import
@@ -40,7 +40,7 @@ class TestImports:
         assert "Sp" in locals()
         del Sp
 
-        from pyLinguist import YaTranslateException as YaT
+        from pyLinguist.utils.exc import YaTranslateException as YaT
         assert YaT
         assert "YaT" in locals()
         del YaT

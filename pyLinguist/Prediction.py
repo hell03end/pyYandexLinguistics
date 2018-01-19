@@ -1,4 +1,8 @@
-from . import YaTranslateException, YaBaseAPIHandler
+from functools import lru_cache
+
+from pyLinguist.utils.base import YaBaseAPIHandler
+from pyLinguist.utils.exc import YaTranslateException
+from pyLinguist.utils.log import log
 
 
 class Predictor(YaBaseAPIHandler):
@@ -7,34 +11,39 @@ class Predictor(YaBaseAPIHandler):
 
         for more info look on https://tech.yandex.ru/predictor/
     """
-    _base_url = r"https://predictor.yandex.net/api/v{version}/predict{json}/"
+    _base_url = r"https://predictor.yandex.net/api/v{}/predict.json/"
     _endpoints = YaBaseAPIHandler._endpoints.copy()
     _endpoints.update({
         'complete': "complete"
     })
 
-    def __init__(self, api_key: str, xml: bool=False, version: str='1'):
-        super(Predictor, self).__init__(api_key, xml, version)
-        self._url = self._base_url.format(version=self._v, json=self._json)
+    def __init__(self, api_key: str, version: str='1', **kwargs):
+        super(Predictor, self).__init__(key=api_key, v=version, **kwargs)
+        self._url = self._base_url.format(self._v)
 
-    def get_langs(self, **params) -> ...:
+    def get_langs(self) -> list:
         """
             Wrapper for getLangs API method.
             Use caching to store received info.
             https://tech.yandex.ru/predictor/doc/dg/reference/getLangs-docpage/
         """
-        return super(Predictor, self)._get_langs(self._url, **params)
+        return super(Predictor, self)._get_langs(self._url)
 
-    def getLangs(self, **params) -> ...:
-        return self.get_langs(**params)
+    def getLangs(self) -> list:
+        return self.get_langs()
 
     @property
     def ok(self) -> bool:
-        """API key is correct"""
         return super(Predictor, self)._ok(self._url)
 
-    def complete(self, lang: str, q: str, limit: int=1, post: bool=False,
-                 **parameters) -> ...:
+    @log()
+    @lru_cache(maxsize=128)
+    def complete(self,
+                 lang: str,
+                 q: str,
+                 limit: int=1,
+                 post: bool=False,
+                 encoding: str="utf-8") -> dict:
         """
             Wrapper for 'complete' API method.
 
@@ -42,12 +51,14 @@ class Predictor(YaBaseAPIHandler):
         """
         if lang not in self.get_langs():
             raise YaTranslateException(501)
-        params = super(Predictor, self)._form_params(
-            lang=lang,
-            q=q,
-            limit=limit,
-            **parameters
-        )
-        return super(Predictor, self).make_combined_request(
-            "complete", post, **params
+
+        return super(Predictor, self).make_request(
+            Predictor._make_url(self._url, "complete"),
+            post=post,
+            encoding=encoding,
+            **super(Predictor, self)._form_params(
+                lang=lang,
+                q=q,
+                limit=limit
+            )
         )
